@@ -36,7 +36,7 @@
 static const char *TAG = "WIFI";
 
 #define FIXED_WIFI_AP_SSID "RTKmodem"
-#define FIXED_WIFI_AP_PASSWORD "aogftw!!!!"
+#define FIXED_WIFI_AP_PASSWORD "aogftw!!"
 
 static EventGroupHandle_t wifi_event_group;
 const int WIFI_STA_GOT_IPV4_BIT = BIT0;

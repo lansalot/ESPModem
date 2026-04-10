@@ -29,6 +29,10 @@
 
 static const char *TAG = "UART";
 
+#define FIXED_UART_PORT UART_NUM_0
+#define FIXED_UART_TX_PIN GPIO_NUM_12
+#define FIXED_UART_RX_PIN GPIO_NUM_13
+
 ESP_EVENT_DEFINE_BASE(UART_EVENT_READ);
 ESP_EVENT_DEFINE_BASE(UART_EVENT_WRITE);
 
@@ -56,7 +60,7 @@ static stream_stats_handle_t stream_stats;
 static void uart_task(void *ctx);
 
 void uart_init() {
-    uart_port = config_get_u8(CONF_ITEM(KEY_CONFIG_UART_NUM));
+    uart_port = FIXED_UART_PORT;
 
     uart_config_t uart_config = {
             .baud_rate = config_get_u32(CONF_ITEM(KEY_CONFIG_UART_BAUD_RATE)),
@@ -68,8 +72,8 @@ void uart_init() {
     ESP_ERROR_CHECK(uart_param_config(uart_port, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(
             uart_port,
-            config_get_i8(CONF_ITEM(KEY_CONFIG_UART_TX_PIN)),
-            config_get_i8(CONF_ITEM(KEY_CONFIG_UART_RX_PIN)),
+            FIXED_UART_TX_PIN,
+            FIXED_UART_RX_PIN,
                 UART_PIN_NO_CHANGE,
                 UART_PIN_NO_CHANGE
     ));

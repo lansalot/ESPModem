@@ -437,7 +437,7 @@
 <body class="bg-light">
     <div class="container">
         <div class="pt-5 text-center">
-            <h2>ESP32 XBee Config <a id="project-version" href="https://github.com/nebkat/esp32-xbee/releases" class="text-muted small"></a> <a id="prerelease-available" class="text-info small" style="display: none">(beta available)</a></h2>
+            <h2>RTKmodem config</h2>
             <p class="lead">In the below section, ensure your phone has its hotspot enabled. Then, Scan and join that network from here.</p>
         </div>
         <form class="needs-validation" id="form" novalidate>
@@ -489,34 +489,10 @@
                 <div class="col-xl-6">
                     <div class="card mb-3 border border-warning">
                         <div class="card-header">
-                            UART (main communication)
+                            This should match your tractor! Usually just the baud rate needs changed, leave the rest</br>
                             <small class="uart-stats stream-stats" data-stream="uart"></small>
                         </div>
                         <div class="card-body">
-                            <div class="form-row mb-3">
-                                <div class="col-8">
-                                    <label class="d-block">UART controller</label>
-                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
-                                        <label class="btn btn-outline-secondary active">
-                                            <input type="radio" name="uart_num" value="0" checked> UART&nbsp;0
-                                        </label>
-                                        <label class="btn btn-outline-secondary">
-                                            <input type="radio" name="uart_num" value="1"> UART&nbsp;1
-                                        </label>
-                                        <label class="btn btn-outline-secondary">
-                                            <input type="radio" name="uart_num" value="2"> UART&nbsp;2
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>TX pin</label>
-                                    <input type="number" name="uart_tx_pin" class="form-control" placeholder="12" value="12" required>
-                                </div>
-                                <div class="col">
-                                    <label>RX pin</label>
-                                    <input type="number" name="uart_rx_pin" class="form-control" placeholder="13" value="13" required>
-                                </div>
-                            </div>
                             <div class="form-row mb-3">
                                 <div class="col-md-4 col-6">
                                     <label>Baud rate</label>
@@ -600,19 +576,6 @@
                                     <label>Mountpoint</label>
                                     <div class="input-group">
                                         <input type="text" name="ntr_cli_mp" class="form-control" maxlength="32" required>
-                                        <!--<div class="input-group-append">
-                                            <button type="button" class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown"></button>
-                                            <div class="dropdown-menu">
-                                                <a class="dropdown-item" href="#">Action</a>
-                                                <a class="dropdown-item" href="#">Another action</a>
-                                                <a class="dropdown-item" href="#">Something else here</a>
-                                                <div role="separator" class="dropdown-divider"></div>
-                                                <a class="dropdown-item" href="#">Separated link</a>
-                                            </div>
-                                        </div>
-                                        <div class="input-group-append">
-                                            <button type="button" class="btn btn-outline-secondary">Search</button>
-                                        </div>-->
                                     </div>
                                 </div>
                             </div>
@@ -644,7 +607,7 @@
     <footer id="footer" class="bg-dark">
         <div class="container">
             <div class="text-center text-light">
-                <small>&copy; <a href="http://cvetkovic.ie" class="text-white">Neboj&#353;a Cvetkovi&#263;</a> 2020 - <a href="https://github.com/nebkat" class="text-white">GitHub</a> - <a href="https://github.com/nebkat/esp32-xbee" class="text-white">Project</a> - Uptime <span class="uptime">loading...</span> - Heap <span class="heap">loading...</span></small>
+                <small>Adapted from &copy; <a href="http://cvetkovic.ie" class="text-white">Neboj&#353;a Cvetkovi&#263;</a> 2020 - <a href="https://github.com/nebkat" class="text-white">GitHub</a> - <a href="https://github.com/nebkat/esp32-xbee" class="text-white">Project</a> - Uptime <span class="uptime">loading...</span> - Heap <span class="heap">loading...</span></small>
             </div>
         </div>
     </footer>
