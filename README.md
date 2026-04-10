@@ -1,3 +1,12 @@
+# Modified for farmer-friendly interface
+
+
+All credit to original authors at https://github.com/nebkat/esp32-xbee
+
+---
+
+
+
 # ESP32 XBee
 ESP32 XBee is the official firmware for the Ardusimple [WiFi NTRIP Master](https://www.ardusimple.com/product/wifi-ntrip-master/) ESP32 XBee device [[3D model]](https://github.com/nebkat/esp32-xbee/blob/master/esp32-xbee-board.step), made with [ESP-IDF](https://github.com/espressif/esp-idf). Its main function is to forward the UART of the ESP32 to a variety of protocols over WiFi.
 
