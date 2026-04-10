@@ -160,6 +160,8 @@ static esp_err_t json_response(httpd_req_t *req, cJSON *root) {
 }
 
 static esp_err_t basic_auth(httpd_req_t *req) {
+    if (basic_authentication == NULL) goto _auth_required;
+
     int authorization_length = httpd_req_get_hdr_value_len(req, "Authorization") + 1;
     if (authorization_length == 0) goto _auth_required;
 
@@ -742,15 +744,7 @@ static esp_err_t register_uri_handler(httpd_handle_t server, const char *path, h
 
 static httpd_handle_t web_server_start(void)
 {
-    config_get_primitive(CONF_ITEM(KEY_CONFIG_ADMIN_AUTH), &auth_method);
-    if (auth_method == AUTH_METHOD_BASIC) {
-        char *username, *password;
-        config_get_str_blob_alloc(CONF_ITEM(KEY_CONFIG_ADMIN_USERNAME), (void **) &username);
-        config_get_str_blob_alloc(CONF_ITEM(KEY_CONFIG_ADMIN_PASSWORD), (void **) &password);
-        basic_authentication = http_auth_basic_header(username, password);
-        free(username);
-        free(password);
-    }
+    auth_method = AUTH_METHOD_OPEN;
 
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();

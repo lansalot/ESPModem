@@ -396,31 +396,6 @@
                 wifiNetworksPasswordEmptyInput.prop('disabled', true);
             });
 
-            // WiFi SoftAP IP configuration
-            var wifiApGwInputs = form.find('input[name="w_ap_gw"]');
-            var wifiApGwPrefixText = form.find('.wifi-ap-ip-prefix');
-            var wifiApIpMinInput = form.find('input[name="w_ap_ip_min"]');
-            var wifiApIpMaxInput = form.find('input[name="w_ap_ip_max"]');
-            var wifiApSubnetInput = form.find('select[name="w_ap_subnet"]');
-
-            wifiApSubnetInput.add(wifiApGwInputs).on('change input', function() {
-                const parts = wifiApGwInputs.map((i, el) => Math.max(0, Math.min(255, el.value))).get();
-                const subnet = parseInt(wifiApSubnetInput.children('option:selected').val());
-
-                wifiApGwPrefixText.text(parts.slice(0, 3).join(".") + ".");
-
-                const mask = 255 >> (subnet - 24);
-
-                const d = parts[3];
-                const min = (d & ~mask) + 1;
-                const max = (d | mask) - 1;
-
-                wifiApGwInputs.eq(3).prop('min', min).prop('max', max).toggleClass('is-invalid', d < min || d > max);
-
-                wifiApIpMinInput.val(min);
-                wifiApIpMaxInput.val(max);
-            }).trigger('change');
-
             var socketClientConnectMessageInput = form.find('input[name="sck_cli_msg"]');
             var socketClientConnectMessageUnformattedInput = form.find('input[name="sck_cli_msg_unformatted"]');
             socketClientConnectMessageInput.on('change', function() {
@@ -463,8 +438,7 @@
     <div class="container">
         <div class="pt-5 text-center">
             <h2>ESP32 XBee Config <a id="project-version" href="https://github.com/nebkat/esp32-xbee/releases" class="text-muted small"></a> <a id="prerelease-available" class="text-info small" style="display: none">(beta available)</a></h2>
-
-            <p class="lead">Adjust the settings below and then click on "Submit". The device will restart with the new settings applied. If you have adjusted WiFi settings the device may be moved onto a new IP address, or require you to reconnect to its access point.</p>
+            <p class="lead">In the below section, ensure your phone has its hotspot enabled. Then, Scan and join that network from here.</p>
         </div>
         <form class="needs-validation" id="form" novalidate>
             <div class="row mb-1">
@@ -511,153 +485,8 @@
                             <input type="hidden" name="w_sta_static" value="0">
                         </div>
                     </div>
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            Admin (this page)
-                        </div>
-                        <div class="card-body">
-                            <div class="form-row mb-3">
-                                <div class="col-4">
-                                    <label>Auth method</label>
-                                    <select name="adm_auth" class="custom-select">
-                                        <option value="0" selected>Open</option>
-                                        <option value="1">Hotspot devices only</option>
-                                        <option value="2">Username/password</option>
-                                        <!--<option value="3">Button press</option>-->
-                                    </select>
-                                </div>
-                                <div class="col-4">
-                                    <label>Username</label>
-                                    <input type="text" name="adm_user" data-disable-if="select[name='adm_auth'] > option[value!='2']" data-disable-if-condition=":selected" class="form-control" maxlength="32" required/>
-                                </div>
-                                <div class="col-4">
-                                    <label>Password</label>
-                                    <input type="password" name="adm_pass" data-disable-if="select[name='adm_auth'] > option[value!='2']" data-disable-if-condition=":selected" class="form-control" maxlength="64" required/>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <!--
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            Bluetooth
-                            <div class="custom-control custom-switch d-inline float-right">
-                                <input type="checkbox" name="bt_active" value="1" class="custom-control-input" id="switch-bluetooth">
-                                <label class="custom-control-label" for="switch-wifi-bluetooth"></label>
-                            </div>
-                        </div>
-                        <div class="card-body" data-disable-if="#switch-bluetooth">
-                            <div class="form-row mb-3">
-                                <div class="col-8">
-                                    <label>Device name</label>
-                                    <div class="input-group">
-                                        <input type="text" name="bt_dev_name" class="form-control" maxlength="32" required>
-                                        <div class="input-group-append btn-group-toggle" data-toggle="buttons">
-                                            <label class="btn btn-outline-secondary active">
-                                                <input type="checkbox" name="bt_dev_vis" value="1" checked> Discoverable
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Pin code</label>
-                                    <div class="input-group">
-                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
-                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
-                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
-                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    -->
                 </div>
                 <div class="col-xl-6">
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            WiFi hotspot
-                            <small class="wifi-ap-status"></small>
-                            <div class="custom-control custom-switch d-inline float-right active">
-                                <input type="checkbox" name="w_ap_active" value="1" checked class="custom-control-input" id="switch-wifi-ap">
-                                <label class="custom-control-label" for="switch-wifi-ap"></label>
-                            </div>
-                            <div class="d-inline mr-1 float-right">
-                                <input type="color" name="w_ap_color" data-disable-if="#switch-wifi-ap" value="#ffffff" id="color-wifi-ap">
-                            </div>
-                        </div>
-                        <div class="card-body" data-disable-if="#switch-wifi-ap">
-                            <div class="form-row mb-3">
-                                <div class="col-6">
-                                    <label>SSID</label>
-                                    <div class="input-group">
-                                        <input type="text" name="w_ap_ssid" class="form-control" maxlength="32">
-                                        <div class="input-group-append btn-group-toggle" data-toggle="buttons">
-                                            <label class="btn btn-outline-warning">
-                                                <input type="checkbox" name="w_ap_ssid_hid" value="1"> Hidden
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <label>Security</label>
-                                    <div class="input-group">
-                                        <input type="password" name="w_ap_pass" data-disable-if="select[name='w_ap_auth_mode'] > option[value='0']" data-disable-if-condition=":selected" class="form-control" style="flex-grow: 2" >
-                                        <select name="w_ap_auth_mode" class="custom-select">
-                                            <option value="0" selected>Open</option>
-                                            <option value="1">WEP</option>
-                                            <option value="2">WPA-PSK</option>
-                                            <option value="3">WPA2-PSK</option>
-                                            <option value="4">WPA/2-PSK (recommended)</option>
-                                            <option value="4">WPA2 Enterprise</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="form-row mb-3">
-                                <div class="col-6">
-                                    <label>Gateway and subnet</label>
-                                    <div class="input-group">
-                                        <div class="input-group-prepend">
-                                            <span class="input-group-text px-1">192.168.</span>
-                                        </div>
-                                        <input type="hidden" name="w_ap_gw" value="192">
-                                        <input type="hidden" name="w_ap_gw" value="168">
-                                        <input type="number" name="w_ap_gw" value="4" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_ap_gw" value="1" maxlength="3" min="1" max="254" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">/</span>
-                                        </div>
-                                        <select name="w_ap_subnet" class="custom-select px-2" required>
-                                            <option value="24" selected>24</option>
-                                            <option value="25">25</option>
-                                            <option value="26">26</option>
-                                            <option value="27">27</option>
-                                            <option value="28">28</option>
-                                            <option value="29">29</option>
-                                            <option value="30">30</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Min/max IP address</label>
-                                    <div class="input-group">
-                                        <div class="input-group-prepend">
-                                            <span class="wifi-ap-ip-prefix input-group-text">192.168.4.</span>
-                                        </div>
-                                        <input type="number" name="w_ap_ip_min" value="1" disabled class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text">-</span>
-                                        </div>
-                                        <input type="number" name="w_ap_ip_max" value="254" disabled class="form-control text-center px-1">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                     <div class="card mb-3 border border-warning">
                         <div class="card-header">
                             UART (main communication)

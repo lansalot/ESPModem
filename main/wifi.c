@@ -35,6 +35,9 @@
 
 static const char *TAG = "WIFI";
 
+#define FIXED_WIFI_AP_SSID "RTKmodem"
+#define FIXED_WIFI_AP_PASSWORD "aogftw!!!!"
+
 static EventGroupHandle_t wifi_event_group;
 const int WIFI_STA_GOT_IPV4_BIT = BIT0;
 const int WIFI_STA_GOT_IPV6_BIT = BIT1;
@@ -269,15 +272,15 @@ void net_init() {
     esp_netif_init();
 
     // SoftAP
-    bool ap_enable = config_get_bool1(CONF_ITEM(KEY_CONFIG_WIFI_AP_ACTIVE));
+    bool ap_enable = true;
     if (ap_enable) {
         esp_netif_ap = esp_netif_create_default_wifi_ap();
 
         // IP configuration
         esp_netif_ip_info_t ip_info_ap;
-        config_get_primitive(CONF_ITEM(KEY_CONFIG_WIFI_AP_GATEWAY), &ip_info_ap.ip);
+        ip_info_ap.ip.addr = esp_netif_htonl(esp_netif_ip4_makeu32(192, 168, 4, 1));
         ip_info_ap.gw = ip_info_ap.ip;
-        uint8_t subnet = config_get_u8(CONF_ITEM(KEY_CONFIG_WIFI_STA_SUBNET));
+        uint8_t subnet = 24;
         ip_info_ap.netmask.addr = esp_netif_htonl(0xffffffffu << (32u - subnet));
 
         // IP forwarding/NATP
@@ -341,7 +344,7 @@ void wifi_init() {
     delay_handle = retry_init(true, 5, 2000, 60000);
 
     bool sta_enable = config_get_bool1(CONF_ITEM(KEY_CONFIG_WIFI_STA_ACTIVE));
-    bool ap_enable = config_get_bool1(CONF_ITEM(KEY_CONFIG_WIFI_AP_ACTIVE));
+    bool ap_enable = true;
 
     // Configure and connect
     wifi_mode_t wifi_mode;
@@ -364,32 +367,18 @@ void wifi_init() {
         esp_netif_get_ip_info(esp_netif_ap, &ip_info_ap);
 
         config_ap.ap.max_connection = 4;
-        size_t ap_ssid_len = sizeof(config_ap.ap.ssid);
-        config_get_str_blob(CONF_ITEM(KEY_CONFIG_WIFI_AP_SSID), &config_ap.ap.ssid, &ap_ssid_len);
-        ap_ssid_len--; // Remove null terminator from length
-        config_ap.ap.ssid_len = ap_ssid_len;
-        if (ap_ssid_len == 0) {
-            // Generate a default AP SSID based on MAC address and store
-            uint8_t mac[6];
-            esp_wifi_get_mac(WIFI_IF_AP, mac);
-            snprintf((char *) config_ap.ap.ssid, sizeof(config_ap.ap.ssid), "ESP_XBee_%02X%02X%02X",
-                    mac[3], mac[4], mac[5]);
-            config_ap.ap.ssid_len = strlen((char *) config_ap.ap.ssid);
-
-            config_set_str(KEY_CONFIG_WIFI_AP_SSID, (char *) config_ap.ap.ssid);
-        }
-        config_get_primitive(CONF_ITEM(KEY_CONFIG_WIFI_AP_SSID_HIDDEN), &config_ap.ap.ssid_hidden);
-        size_t ap_password_len = sizeof(config_ap.ap.password);
-        config_get_str_blob(CONF_ITEM(KEY_CONFIG_WIFI_AP_PASSWORD), &config_ap.ap.password, &ap_password_len);
-        ap_password_len--; // Remove null terminator from length
-        config_get_primitive(CONF_ITEM(KEY_CONFIG_WIFI_AP_AUTH_MODE), &config_ap.ap.authmode);
+        strlcpy((char *) config_ap.ap.ssid, FIXED_WIFI_AP_SSID, sizeof(config_ap.ap.ssid));
+        config_ap.ap.ssid_len = strlen(FIXED_WIFI_AP_SSID);
+        config_ap.ap.ssid_hidden = false;
+        strlcpy((char *) config_ap.ap.password, FIXED_WIFI_AP_PASSWORD, sizeof(config_ap.ap.password));
+        config_ap.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
 
         ESP_LOGI(TAG, "WIFI_AP_SSID: %s %s(%s)", config_ap.ap.ssid,
                 config_ap.ap.ssid_hidden ? "(hidden) " : "",
-                ap_password_len == 0 ? "open" : "with password");
+            "with password");
         uart_nmea("$PESP,WIFI,AP,SSID,%s,%c,%c", config_ap.ap.ssid,
                 config_ap.ap.ssid_hidden ? 'H' : 'V',
-                ap_password_len == 0 ? 'O' : 'P');
+            'P');
 
         ESP_LOGI(TAG, "WIFI_AP_IP: ip: " IPSTR "/%d, gw: " IPSTR,
                 IP2STR(&ip_info_ap.ip),
