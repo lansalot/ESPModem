@@ -32,8 +32,11 @@
 #include <stream_stats.h>
 #include <esp32/rom/crc.h>
 #include <lwip/sockets.h>
+#include <interface/ntrip.h>
 #include "web_server.h"
 #include "esp_timer.h"
+
+extern const char *ntrip_client_status_get(void);
 
 // Max length a file path can have on storage
 #define FILE_PATH_MAX (ESP_VFS_PATH_MAX + CONFIG_SPIFFS_OBJ_NAME_LEN)
@@ -46,6 +49,7 @@
 static const char *TAG = "WEB";
 
 static char *buffer;
+static httpd_handle_t server_handle = NULL;
 
 enum auth_method {
     AUTH_METHOD_OPEN = 0,
@@ -693,9 +697,11 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
     }
 
     cJSON *sta = cJSON_AddObjectToObject(wifi, "sta");
-    cJSON_AddBoolToObject(sta, "active", ap_status.active);
+    cJSON_AddBoolToObject(sta, "active", sta_status.active);
     if (sta_status.active) {
         cJSON_AddBoolToObject(sta, "connected", sta_status.connected);
+        cJSON_AddNumberToObject(sta, "last_reason", sta_status.last_reason);
+        cJSON_AddStringToObject(sta, "last_error", sta_status.last_error);
         if (sta_status.connected) {
             cJSON_AddStringToObject(sta, "ssid", (char *) sta_status.ssid);
             cJSON_AddStringToObject(sta, "authmode", wifi_auth_mode_name(sta_status.authmode));
@@ -708,6 +714,9 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
             cJSON_AddStringToObject(sta, "ip6", ip);
         }
     }
+
+    cJSON *ntrip = cJSON_AddObjectToObject(root, "ntrip");
+    cJSON_AddStringToObject(ntrip, "client_status", ntrip_client_status_get());
 
     return json_response(req, root);
 }
@@ -733,6 +742,56 @@ static esp_err_t wifi_scan_get_handler(httpd_req_t *req) {
     return json_response(req, root);
 }
 
+static esp_err_t wifi_join_post_handler(httpd_req_t *req) {
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    int ret = httpd_req_recv(req, buffer, BUFFER_SIZE - 1);
+    if (ret <= 0) {
+        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+            httpd_resp_send_408(req);
+        }
+
+        return ESP_FAIL;
+    }
+
+    buffer[ret] = '\0';
+    cJSON *request = cJSON_Parse(buffer);
+    if (request == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *ssid = cJSON_GetObjectItem(request, "ssid");
+    cJSON *password = cJSON_GetObjectItem(request, "password");
+    if (!cJSON_IsString(ssid) || !cJSON_IsString(password)) {
+        cJSON_Delete(request);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid and password are required string fields");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = config_set_str(KEY_CONFIG_WIFI_STA_SSID, ssid->valuestring);
+    if (err == ESP_OK) err = config_set_str(KEY_CONFIG_WIFI_STA_PASSWORD, password->valuestring);
+    if (err == ESP_OK) {
+        bool sta_active = true;
+        err = config_set_bool1(KEY_CONFIG_WIFI_STA_ACTIVE, sta_active);
+    }
+    if (err == ESP_OK) err = config_commit();
+
+    if (err == ESP_OK) {
+        err = wifi_sta_join(ssid->valuestring, password->valuestring);
+    }
+
+    cJSON_Delete(request);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "success", err == ESP_OK);
+    cJSON_AddStringToObject(root, "message", err == ESP_OK ?
+            "Joining Wi-Fi now. The status banner will update with success or failure." :
+            "Could not start joining Wi-Fi. Check SSID/password and try again.");
+
+    return json_response(req, root);
+}
+
 static esp_err_t register_uri_handler(httpd_handle_t server, const char *path, httpd_method_t method, esp_err_t (*handler)(httpd_req_t *r)) {
     httpd_uri_t uri_config_get = {
             .uri        = path,
@@ -749,21 +808,23 @@ static httpd_handle_t web_server_start(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
+    config.max_uri_handlers = 16;
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&server, &config) == ESP_OK) {
-        register_uri_handler(server, "/config", HTTP_GET, config_get_handler);
-        register_uri_handler(server, "/config", HTTP_POST, config_post_handler);
-        register_uri_handler(server, "/status", HTTP_GET, status_get_handler);
+        ESP_ERROR_CHECK(register_uri_handler(server, "/config", HTTP_GET, config_get_handler));
+        ESP_ERROR_CHECK(register_uri_handler(server, "/config", HTTP_POST, config_post_handler));
+        ESP_ERROR_CHECK(register_uri_handler(server, "/status", HTTP_GET, status_get_handler));
 
-        register_uri_handler(server, "/log", HTTP_GET, log_get_handler);
-        register_uri_handler(server, "/core_dump", HTTP_GET, core_dump_get_handler);
-        register_uri_handler(server, "/heap_info", HTTP_GET, heap_info_get_handler);
+        ESP_ERROR_CHECK(register_uri_handler(server, "/log", HTTP_GET, log_get_handler));
+        ESP_ERROR_CHECK(register_uri_handler(server, "/core_dump", HTTP_GET, core_dump_get_handler));
+        ESP_ERROR_CHECK(register_uri_handler(server, "/heap_info", HTTP_GET, heap_info_get_handler));
 
-        register_uri_handler(server, "/wifi/scan", HTTP_GET, wifi_scan_get_handler);
+        ESP_ERROR_CHECK(register_uri_handler(server, "/wifi/scan", HTTP_GET, wifi_scan_get_handler));
+        ESP_ERROR_CHECK(register_uri_handler(server, "/wifi/join", HTTP_POST, wifi_join_post_handler));
 
-        register_uri_handler(server, "/*", HTTP_GET, file_get_handler);
+        ESP_ERROR_CHECK(register_uri_handler(server, "/*", HTTP_GET, file_get_handler));
     }
 
     if (server == NULL) {
@@ -778,5 +839,16 @@ static httpd_handle_t web_server_start(void)
 
 void web_server_init() {
     www_spiffs_init();
-    web_server_start();
+    server_handle = web_server_start();
+}
+
+void web_server_restart() {
+    if (server_handle != NULL) {
+        ESP_LOGI(TAG, "Stopping web server for restart");
+        httpd_stop(server_handle);
+        server_handle = NULL;
+    }
+
+    ESP_LOGI(TAG, "Starting web server after restart");
+    server_handle = web_server_start();
 }
