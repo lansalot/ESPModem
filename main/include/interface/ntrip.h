@@ -16,6 +16,7 @@
 void ntrip_server_init();
 void ntrip_client_init();
 void ntrip_caster_init();
+const char *ntrip_client_status_get();
 
 bool ntrip_response_ok(void *response);
 bool ntrip_response_sourcetable_ok(void *response);

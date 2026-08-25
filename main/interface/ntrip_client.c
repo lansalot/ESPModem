@@ -51,6 +51,11 @@ static status_led_handle_t status_led = NULL;
 static stream_stats_handle_t stream_stats = NULL;
 
 static char nmea_gga_latest[128] = "";
+static char ntrip_client_status[64] = "Disabled";
+
+const char *ntrip_client_status_get() {
+    return ntrip_client_status;
+}
 
 static bool ntrip_client_enabled() {
     char *host = NULL;
@@ -139,6 +144,7 @@ static void ntrip_client_task(void *ctx) {
         config_get_str_blob_alloc(CONF_ITEM(KEY_CONFIG_NTRIP_CLIENT_MOUNTPOINT), (void **) &mountpoint);
 
         ESP_LOGI(TAG, "Connecting to %s:%d/%s", host, port, mountpoint);
+        snprintf(ntrip_client_status, sizeof(ntrip_client_status), "Connecting to %s:%d/%s", host, port, mountpoint);
         uart_nmea("$PESP,NTRIP,CLI,CONNECTING,%s:%d,%s", host, port, mountpoint);
         sock = connect_socket(host, port, SOCK_STREAM);
         ERROR_ACTION(TAG, sock == CONNECT_SOCKET_ERROR_RESOLVE, goto _error, "Could not resolve host");
@@ -169,6 +175,7 @@ static void ntrip_client_task(void *ctx) {
         free(status);
 
         ESP_LOGI(TAG, "Successfully connected to %s:%d/%s", host, port, mountpoint);
+        snprintf(ntrip_client_status, sizeof(ntrip_client_status), "Connected to %s:%d/%s", host, port, mountpoint);
         uart_nmea("$PESP,NTRIP,CLI,CONNECTED,%s:%d,%s", host, port, mountpoint);
 
         retry_reset(delay_handle);
@@ -197,9 +204,13 @@ static void ntrip_client_task(void *ctx) {
         if (status_led != NULL) status_led->active = false;
 
         ESP_LOGW(TAG, "Disconnected from %s:%d/%s", host, port, mountpoint);
+        snprintf(ntrip_client_status, sizeof(ntrip_client_status), "Disconnected from %s:%d/%s", host, port, mountpoint);
         uart_nmea("$PESP,NTRIP,CLI,DISCONNECTED,%s:%d,%s", host, port, mountpoint);
 
         _error:
+        if (strstr(ntrip_client_status, "Connected") == NULL && strstr(ntrip_client_status, "Disconnected") == NULL) {
+            strlcpy(ntrip_client_status, "Connection failed - will retry", sizeof(ntrip_client_status));
+        }
         destroy_socket(&sock);
 
         free(buffer);
@@ -213,7 +224,16 @@ static void ntrip_client_task(void *ctx) {
 }
 
 void ntrip_client_init() {
-    if (!ntrip_client_enabled()) return;
+    if (!ntrip_client_enabled()) {
+        strlcpy(ntrip_client_status, "Disabled - missing host/mountpoint", sizeof(ntrip_client_status));
+        ESP_LOGW(TAG, "NTRIP client disabled: host/mountpoint not configured");
+        uart_nmea("$PESP,NTRIP,CLI,DISABLED,CONFIG_MISSING");
+        return;
+    }
+
+    strlcpy(ntrip_client_status, "Starting", sizeof(ntrip_client_status));
+    ESP_LOGW(TAG, "Starting NTRIP client task");
+    uart_nmea("$PESP,NTRIP,CLI,STARTING");
 
     xTaskCreate(ntrip_client_task, "ntrip_client_task", 4096, NULL, TASK_PRIORITY_INTERFACE, NULL);
 }

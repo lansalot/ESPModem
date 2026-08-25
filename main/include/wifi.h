@@ -22,6 +22,9 @@ typedef struct wifi_sta_status {
     wifi_auth_mode_t authmode;
     int8_t rssi;
 
+    int last_reason;
+    char last_error[64];
+
     esp_ip4_addr_t ip4_addr;
     esp_ip6_addr_t ip6_addr;
 } wifi_sta_status_t;
@@ -35,6 +38,7 @@ wifi_sta_list_t *wifi_ap_sta_list();
 
 void wifi_ap_status(wifi_ap_status_t *status);
 void wifi_sta_status(wifi_sta_status_t *status);
+esp_err_t wifi_sta_join(const char *ssid, const char *password);
 
 void wait_for_ip();
 void wait_for_network();

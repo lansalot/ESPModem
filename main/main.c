@@ -86,6 +86,8 @@ void app_main()
     char elf_buffer[17];
     esp_ota_get_app_elf_sha256(elf_buffer, sizeof(elf_buffer));
 
+    ESP_LOGE(TAG, "APP LOG LIVE: startup marker A");
+
     uart_nmea("$PESP,INIT,START,%s,%s", app_desc->version, reset_reason_name(reset_reason));
 
     ESP_LOGI(TAG, "╔══════════════════════════════════════════════╗");
@@ -127,6 +129,7 @@ void app_main()
     ntrip_client_init();
 
     uart_nmea("$PESP,INIT,COMPLETE");
+    ESP_LOGE(TAG, "APP LOG LIVE: startup marker B");
 
     wait_for_ip();
 

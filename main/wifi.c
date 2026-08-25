@@ -27,6 +27,7 @@
 #include <uart.h>
 #include <status_led.h>
 #include <retry.h>
+#include <web_server.h>
 #include <freertos/event_groups.h>
 #include <esp_netif_ip_addr.h>
 #include <lwip/lwip_napt.h>
@@ -42,6 +43,7 @@ static EventGroupHandle_t wifi_event_group;
 const int WIFI_STA_GOT_IPV4_BIT = BIT0;
 const int WIFI_STA_GOT_IPV6_BIT = BIT1;
 const int WIFI_AP_STA_CONNECTED_BIT = BIT2;
+const int WIFI_AP_ACTIVE_BIT = BIT3;
 
 static TaskHandle_t sta_status_task = NULL;
 static TaskHandle_t sta_reconnect_task = NULL;
@@ -60,9 +62,93 @@ static bool sta_active = false;
 static bool sta_connected;
 static wifi_ap_record_t sta_ap_info;
 static wifi_sta_list_t ap_sta_list;
+static int sta_last_disconnect_reason;
+static char sta_last_error[64] = "Not connected";
 
 static esp_netif_t *esp_netif_ap;
 static esp_netif_t *esp_netif_sta;
+
+static void wifi_sta_status_task(void *ctx);
+static void wifi_sta_reconnect_task(void *ctx);
+
+static esp_err_t wifi_sta_runtime_init() {
+    if (esp_netif_sta == NULL) {
+        esp_netif_sta = esp_netif_create_default_wifi_sta();
+        if (esp_netif_sta == NULL) {
+            ESP_LOGE(TAG, "Could not create default STA netif");
+            return ESP_FAIL;
+        }
+    }
+
+    if (sta_status_task == NULL) {
+        xTaskCreate(wifi_sta_status_task, "wifi_sta_status", 2048, NULL, TASK_PRIORITY_WIFI_STATUS, &sta_status_task);
+        vTaskSuspend(sta_status_task);
+    }
+
+    if (sta_reconnect_task == NULL) {
+        xTaskCreate(wifi_sta_reconnect_task, "wifi_sta_reconnect", 4096, NULL, TASK_PRIORITY_WIFI_STATUS, &sta_reconnect_task);
+        vTaskSuspend(sta_reconnect_task);
+    }
+
+    if (status_led_sta == NULL) {
+        config_color_t sta_led_color = config_get_color(CONF_ITEM(KEY_CONFIG_WIFI_STA_COLOR));
+        if (sta_led_color.rgba != 0) {
+            status_led_sta = status_led_add(sta_led_color.rgba, STATUS_LED_STATIC, 500, 2000, 0);
+        }
+    }
+
+    return ESP_OK;
+}
+
+static void wifi_log_ap_details() {
+    wifi_config_t applied_ap_config = {0};
+    esp_err_t err = esp_wifi_get_config(WIFI_IF_AP, &applied_ap_config);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Could not read AP config: %s", esp_err_to_name(err));
+        return;
+    }
+
+    esp_netif_ip_info_t ip_info_ap = {0};
+    err = esp_netif_get_ip_info(esp_netif_ap, &ip_info_ap);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Could not read AP IP info: %s", esp_err_to_name(err));
+        return;
+    }
+
+    ESP_LOGI(TAG, "WIFI_AP_SSID: %s %s(%s)", applied_ap_config.ap.ssid,
+            applied_ap_config.ap.ssid_hidden ? "(hidden) " : "",
+            strlen((const char *) applied_ap_config.ap.password) == 0 ? "open" : "with password");
+    ESP_LOGI(TAG, "WIFI_AP_IP: ip: " IPSTR "/%d, gw: " IPSTR,
+            IP2STR(&ip_info_ap.ip),
+            ffs(~ip_info_ap.netmask.addr) - 1,
+            IP2STR(&ip_info_ap.gw));
+    ESP_LOGI(TAG, "WIFI_AP_CFG: channel: %u, hidden: %u, auth: %u, max_conn: %u",
+            applied_ap_config.ap.channel,
+            applied_ap_config.ap.ssid_hidden,
+            applied_ap_config.ap.authmode,
+            applied_ap_config.ap.max_connection);
+}
+
+static const char *wifi_disconnect_reason_text(wifi_err_reason_t reason) {
+    switch (reason) {
+        case WIFI_REASON_AUTH_EXPIRE:
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_AUTH_FAIL:
+        case WIFI_REASON_ASSOC_EXPIRE:
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:
+            return "Authentication failed. Check password and security type.";
+        case WIFI_REASON_NO_AP_FOUND:
+            return "Access point not found. Check SSID and range.";
+        case WIFI_REASON_ASSOC_FAIL:
+            return "Association failed. Router rejected the connection.";
+        case WIFI_REASON_BEACON_TIMEOUT:
+            return "Connection timed out. Signal may be weak or unstable.";
+        case WIFI_REASON_CONNECTION_FAIL:
+            return "Connection failed. Try scanning again and rejoining.";
+        default:
+            return "Disconnected from Wi-Fi.";
+    }
+}
 
 static void wifi_sta_status_task(void *ctx) {
     uint8_t rssi_duty = 0;
@@ -117,7 +203,9 @@ static void handle_sta_connected(void *esp_netif, esp_event_base_t base, int32_t
     ESP_LOGI(TAG, "WIFI_EVENT_STA_CONNECTED: ssid: %.*s", event->ssid_len, event->ssid);
     uart_nmea("$PESP,WIFI,STA,CONNECTED,%.*s", event->ssid_len, event->ssid);
 
-    sta_connected = true;
+    sta_connected = false;
+    sta_last_disconnect_reason = 0;
+    strlcpy(sta_last_error, "Connected to AP. Waiting for IP address...", sizeof(sta_last_error));
 
     retry_reset(delay_handle);
 
@@ -152,6 +240,8 @@ static void handle_sta_disconnected(void *esp_netif, esp_event_base_t base, int3
     uart_nmea("$PESP,WIFI,STA,DISCONNECTED,%.*s,%d,%s", event->ssid_len, event->ssid, event->reason, reason);
 
     sta_connected = false;
+    sta_last_disconnect_reason = event->reason;
+    strlcpy(sta_last_error, wifi_disconnect_reason_text(event->reason), sizeof(sta_last_error));
 
     // No longer tracking status
     if (sta_status_task != NULL) vTaskSuspend(sta_status_task);
@@ -179,6 +269,7 @@ static void handle_sta_auth_mode_change(void *esp_netif, esp_event_base_t base, 
 
 static void handle_ap_start(void *esp_netif, esp_event_base_t base, int32_t event_id, void *event_data) {
     ESP_LOGI(TAG, "WIFI_EVENT_AP_START");
+    uart_nmea("$PESP,WIFI,AP,START");
 
     // IP forwarding/NATP
     if (config_get_bool1(CONF_ITEM(KEY_CONFIG_WIFI_STA_AP_FORWARD))) {
@@ -188,12 +279,17 @@ static void handle_ap_start(void *esp_netif, esp_event_base_t base, int32_t even
     }
 
     ap_active = true;
+    xEventGroupSetBits(wifi_event_group, WIFI_AP_ACTIVE_BIT);
+
+    wifi_log_ap_details();
 }
 
 static void handle_ap_stop(void *esp_netif, esp_event_base_t base, int32_t event_id, void *event_data) {
     ESP_LOGI(TAG, "WIFI_EVENT_AP_STOP");
+    uart_nmea("$PESP,WIFI,AP,STOP");
 
     ap_active = false;
+    xEventGroupClearBits(wifi_event_group, WIFI_AP_ACTIVE_BIT);
 }
 
 static void handle_ap_sta_connected(void *esp_netif, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -242,6 +338,13 @@ static void handle_sta_got_ip(void *esp_netif, esp_event_base_t base, int32_t ev
             IP2STR(&event->ip_info.ip),
             ffs(~event->ip_info.netmask.addr) - 1,
             IP2STR(&event->ip_info.gw));
+        ESP_LOGW(TAG, "Web UI should be reachable at http://" IPSTR "/", IP2STR(&event->ip_info.ip));
+
+        // Ensure HTTP listener is reachable on the STA interface after reassociation/DHCP.
+        web_server_restart();
+
+    sta_connected = true;
+    strlcpy(sta_last_error, "Connected", sizeof(sta_last_error));
 
     xEventGroupSetBits(wifi_event_group, WIFI_STA_GOT_IPV4_BIT);
 }
@@ -249,6 +352,9 @@ static void handle_sta_got_ip(void *esp_netif, esp_event_base_t base, int32_t ev
 static void handle_sta_lost_ip(void *esp_netif, esp_event_base_t base, int32_t event_id, void *event_data) {
     ESP_LOGI(TAG, "IP_EVENT_STA_LOST_IP");
     uart_nmea("$PESP,WIFI,STA,IP_LOST");
+
+    sta_connected = false;
+    strlcpy(sta_last_error, "Lost IP address. Reconnecting...", sizeof(sta_last_error));
 
     xEventGroupClearBits(wifi_event_group, WIFI_STA_GOT_IPV4_BIT);
 }
@@ -367,6 +473,8 @@ void wifi_init() {
         esp_netif_get_ip_info(esp_netif_ap, &ip_info_ap);
 
         config_ap.ap.max_connection = 4;
+        config_ap.ap.channel = 6;
+        config_ap.ap.beacon_interval = 100;
         strlcpy((char *) config_ap.ap.ssid, FIXED_WIFI_AP_SSID, sizeof(config_ap.ap.ssid));
         config_ap.ap.ssid_len = strlen(FIXED_WIFI_AP_SSID);
         config_ap.ap.ssid_hidden = false;
@@ -430,6 +538,29 @@ void wifi_init() {
     }
 
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    if (ap_enable) {
+        EventBits_t ap_bits = xEventGroupWaitBits(wifi_event_group, WIFI_AP_ACTIVE_BIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(3000));
+        if ((ap_bits & WIFI_AP_ACTIVE_BIT) == 0) {
+            ESP_LOGW(TAG, "SoftAP did not report AP_START in time, restarting Wi-Fi stack");
+            ESP_ERROR_CHECK(esp_wifi_stop());
+            ESP_ERROR_CHECK(esp_wifi_start());
+
+            ap_bits = xEventGroupWaitBits(wifi_event_group, WIFI_AP_ACTIVE_BIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(3000));
+            if ((ap_bits & WIFI_AP_ACTIVE_BIT) == 0) {
+                ESP_LOGE(TAG, "SoftAP still not active after retry");
+                uart_nmea("$PESP,WIFI,AP,ERROR,NOT_ACTIVE");
+            }
+        }
+
+        wifi_config_t applied_ap_config = {0};
+        ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_AP, &applied_ap_config));
+        uart_nmea("$PESP,WIFI,AP,CFG,CH,%u,H,%u,A,%u,MC,%u", applied_ap_config.ap.channel,
+            applied_ap_config.ap.ssid_hidden,
+            applied_ap_config.ap.authmode,
+            applied_ap_config.ap.max_connection);
+        wifi_log_ap_details();
+    }
 }
 
 wifi_sta_list_t *wifi_ap_sta_list() {
@@ -458,6 +589,8 @@ void wifi_ap_status(wifi_ap_status_t *status) {
 void wifi_sta_status(wifi_sta_status_t *status) {
     status->active = sta_active;
     status->connected = sta_connected;
+    status->last_reason = sta_last_disconnect_reason;
+    strlcpy(status->last_error, sta_last_error, sizeof(status->last_error));
     if (!sta_connected) {
         memcpy(status->ssid, config_sta.sta.ssid, sizeof(config_sta.sta.ssid));
         return;
@@ -467,11 +600,102 @@ void wifi_sta_status(wifi_sta_status_t *status) {
     status->rssi = sta_ap_info.rssi;
     status->authmode = sta_ap_info.authmode;
 
-    esp_netif_ip_info_t ip_info;
-    esp_netif_get_ip_info(esp_netif_sta, &ip_info);
-    status->ip4_addr = ip_info.ip;
+    esp_netif_ip_info_t ip_info = {0};
+    if (esp_netif_sta != NULL && esp_netif_get_ip_info(esp_netif_sta, &ip_info) == ESP_OK) {
+        status->ip4_addr = ip_info.ip;
+        esp_netif_get_ip6_linklocal(esp_netif_sta, &status->ip6_addr);
+    }
+}
 
-    esp_netif_get_ip6_linklocal(esp_netif_sta, &status->ip6_addr);
+esp_err_t wifi_sta_join(const char *ssid, const char *password) {
+    if (ssid == NULL || ssid[0] == '\0') {
+        sta_last_disconnect_reason = WIFI_REASON_NO_AP_FOUND;
+        strlcpy(sta_last_error, "SSID is empty. Enter a Wi-Fi network name.", sizeof(sta_last_error));
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (password == NULL) password = "";
+
+    size_t ssid_length = strlen(ssid);
+    size_t password_length = strlen(password);
+    if (ssid_length > 32 || password_length > 64) {
+        sta_last_disconnect_reason = WIFI_REASON_UNSPECIFIED;
+        strlcpy(sta_last_error, "SSID or password is too long.", sizeof(sta_last_error));
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (password_length > 0 && password_length < 8) {
+        sta_last_disconnect_reason = WIFI_REASON_AUTH_FAIL;
+        strlcpy(sta_last_error, "Password is too short for secured Wi-Fi.", sizeof(sta_last_error));
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_LOGI(TAG, "Join requested for SSID: %s", ssid);
+    uart_nmea("$PESP,WIFI,STA,JOIN_REQUEST,%s", ssid);
+
+    wifi_mode_t mode;
+    esp_err_t err = esp_wifi_get_mode(&mode);
+    if (err != ESP_OK) {
+        strlcpy(sta_last_error, "Wi-Fi mode is unavailable.", sizeof(sta_last_error));
+        return err;
+    }
+
+    if (mode != WIFI_MODE_STA && mode != WIFI_MODE_APSTA) {
+        err = esp_wifi_set_mode(mode == WIFI_MODE_AP ? WIFI_MODE_APSTA : WIFI_MODE_STA);
+        if (err != ESP_OK) {
+            strlcpy(sta_last_error, "Could not enable station mode.", sizeof(sta_last_error));
+            return err;
+        }
+
+        // Keep SoftAP discoverable after switching from AP to AP+STA mode.
+        if (mode == WIFI_MODE_AP) {
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &config_ap));
+            ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20));
+            ESP_LOGI(TAG, "Reapplied AP config after enabling STA mode");
+        }
+    }
+
+    err = wifi_sta_runtime_init();
+    if (err != ESP_OK) {
+        strlcpy(sta_last_error, "Could not initialize station interface.", sizeof(sta_last_error));
+        uart_nmea("$PESP,WIFI,STA,JOIN_FAILED,%s,INIT", ssid);
+        return err;
+    }
+
+    memset(&config_sta, 0, sizeof(config_sta));
+    strlcpy((char *) config_sta.sta.ssid, ssid, sizeof(config_sta.sta.ssid));
+    strlcpy((char *) config_sta.sta.password, password, sizeof(config_sta.sta.password));
+    config_sta.sta.scan_method = config_get_bool1(CONF_ITEM(KEY_CONFIG_WIFI_STA_SCAN_MODE_ALL))
+            ? WIFI_ALL_CHANNEL_SCAN : WIFI_FAST_SCAN;
+
+    err = esp_wifi_set_config(WIFI_IF_STA, &config_sta);
+    if (err != ESP_OK) {
+        strlcpy(sta_last_error, "Could not apply Wi-Fi settings.", sizeof(sta_last_error));
+        uart_nmea("$PESP,WIFI,STA,JOIN_FAILED,%s,CFG", ssid);
+        return err;
+    }
+
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+
+    xEventGroupClearBits(wifi_event_group, WIFI_STA_GOT_IPV4_BIT | WIFI_STA_GOT_IPV6_BIT);
+    sta_connected = false;
+    sta_last_disconnect_reason = 0;
+    strlcpy(sta_last_error, "Joining network...", sizeof(sta_last_error));
+    uart_nmea("$PESP,WIFI,STA,JOINING,%s", ssid);
+
+    if (sta_reconnect_task != NULL) vTaskSuspend(sta_reconnect_task);
+
+    esp_wifi_disconnect();
+    err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        strlcpy(sta_last_error, "Could not start Wi-Fi connection.", sizeof(sta_last_error));
+        uart_nmea("$PESP,WIFI,STA,JOIN_FAILED,%s,CONNECT", ssid);
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Join started for SSID: %s", ssid);
+
+    return ESP_OK;
 }
 
 wifi_ap_record_t *wifi_scan(uint16_t *number) {
@@ -481,6 +705,12 @@ wifi_ap_record_t *wifi_scan(uint16_t *number) {
     // Ensure STA is enabled
     if (wifi_mode != WIFI_MODE_APSTA && wifi_mode != WIFI_MODE_STA) {
         esp_wifi_set_mode(wifi_mode == WIFI_MODE_AP ? WIFI_MODE_APSTA : WIFI_MODE_STA);
+
+        // If we transitioned from AP-only mode, restore AP settings so SSID remains visible.
+        if (wifi_mode == WIFI_MODE_AP) {
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &config_ap));
+            ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20));
+        }
     }
 
     wifi_scan_config_t wifi_scan_config = {

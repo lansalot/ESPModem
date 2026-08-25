@@ -34,6 +34,21 @@ static const char *TAG = "NTRIP_CLIENT";
 
 esp_http_client_handle_t http = NULL;
 
+static bool ntrip2_client_enabled() {
+    char *host = NULL;
+    char *mountpoint = NULL;
+
+    config_get_str_blob_alloc(CONF_ITEM(KEY_CONFIG_NTRIP_CLIENT_HOST), (void **) &host);
+    config_get_str_blob_alloc(CONF_ITEM(KEY_CONFIG_NTRIP_CLIENT_MOUNTPOINT), (void **) &mountpoint);
+
+    bool enabled = host != NULL && host[0] != '\0' && mountpoint != NULL && mountpoint[0] != '\0';
+
+    free(host);
+    free(mountpoint);
+
+    return enabled;
+}
+
 static void ntrip2_client_uart_handler(void* handler_args, esp_event_base_t base, int32_t id, void* event_data) {
     if (http == NULL) return;
 
@@ -122,7 +137,7 @@ void ntrip2_client_task(void *ctx) {
 }
 
 void ntrip2_client_init() {
-    if (!config_get_bool1(CONF_ITEM(KEY_CONFIG_NTRIP_CLIENT_ACTIVE))) return;
+    if (!ntrip2_client_enabled()) return;
 
     xTaskCreate(ntrip2_client_task, "ntrip2_client_task", 16384, NULL, TASK_PRIORITY_NTRIP, NULL);
 }

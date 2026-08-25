@@ -255,6 +255,8 @@
 
             var wifiApStatusText = form.find('.wifi-ap-status');
             var wifiStaStatusText = form.find('.wifi-sta-status');
+            var wifiJoinFeedbackText = form.find('.wifi-join-feedback');
+            var ntripClientStatusText = form.find('.ntrip-client-status');
 
             var streamStatsTexts = form.find('.stream-stats');
 
@@ -334,13 +336,18 @@
                     if (!wifi.sta.active) {
                         wifiStaStatusText.text("Not Active");
                     } else if (!wifi.sta.connected) {
-                        wifiStaStatusText.text("Not Connected");
+                        const errorText = wifi.sta.last_error ? wifi.sta.last_error : "Not connected";
+                        wifiStaStatusText.text("Not Connected - " + errorText);
                     } else {
                         wifiStaStatusText.appendText(wifi.sta.ssid + (wifi.sta.authmode == 'OPEN' ? " (OPEN)" : ''))
                             .appendText(" / ")
                             .append($('<a>', {text: wifi.sta.ip4, href: 'http://' + wifi.sta.ip4 + '/'}))
                             .appendText(" / ")
                             .append($('<span>', {class: 'text-' + wifiRssiColorClass(wifi.sta.rssi), text: wifi.sta.rssi + "dBm"}));
+                    }
+
+                    if (data.ntrip && data.ntrip.client_status) {
+                        ntripClientStatusText.text(data.ntrip.client_status);
                     }
                 }).always(function() {
                     setTimeout(statusUpdate, 2500);
@@ -357,6 +364,8 @@
             var wifiNetworksSsidInput = form.find('.wifi-networks-ssid');
             var wifiNetworksPasswordInput = form.find('.wifi-networks-pass');
             var wifiNetworksPasswordEmptyInput = form.find('.wifi-networks-pass-empty');
+            var wifiNetworksJoinButton = form.find('.wifi-networks-join');
+            var wifiNetworksJoinSpinner = form.find('.wifi-networks-join-spinner');
             wifiNetworksScanButton.on('click', function() {
                 wifiNetworksOpenList.empty();
                 wifiNetworksSecuredList.empty();
@@ -394,6 +403,52 @@
             wifiNetworksSsidInput.on('input change', function() {
                 wifiNetworksPasswordInput.prop('disabled', false);
                 wifiNetworksPasswordEmptyInput.prop('disabled', true);
+            });
+
+            wifiNetworksJoinButton.on('click', function() {
+                const ssid = wifiNetworksSsidInput.val().trim();
+                const password = wifiNetworksPasswordInput.is(':disabled') ? '' : wifiNetworksPasswordInput.val();
+
+                if (!ssid) {
+                    wifiJoinFeedbackText.removeClass('text-success text-muted').addClass('text-danger')
+                        .text('Enter or select an SSID before joining.');
+                    return;
+                }
+
+                wifiNetworksJoinButton.prop('disabled', true);
+                wifiNetworksJoinSpinner.removeClass('d-none');
+                wifiJoinFeedbackText.removeClass('text-danger text-success').addClass('text-muted')
+                    .text('Joining ' + ssid + '...');
+
+                $.ajax({
+                    url: 'wifi/join',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    dataType: 'json',
+                    data: JSON.stringify({
+                        ssid: ssid,
+                        password: password
+                    })
+                }).done(function(data) {
+                    const ok = data && data.success;
+                    const message = (data && data.message) ? data.message : (ok ? 'Join started.' : 'Join failed.');
+                    wifiJoinFeedbackText.removeClass('text-muted text-danger text-success')
+                        .addClass(ok ? 'text-success' : 'text-danger')
+                        .text(message);
+                }).fail(function(xhr) {
+                    let message = 'Join request failed.';
+                    if (xhr && xhr.responseJSON && xhr.responseJSON.message) {
+                        message = xhr.responseJSON.message;
+                    } else if (xhr && xhr.responseText) {
+                        message = xhr.responseText;
+                    }
+
+                    wifiJoinFeedbackText.removeClass('text-muted text-success').addClass('text-danger')
+                        .text(message);
+                }).always(function() {
+                    wifiNetworksJoinSpinner.addClass('d-none');
+                    wifiNetworksJoinButton.prop('disabled', false);
+                });
             });
 
             var socketClientConnectMessageInput = form.find('input[name="sck_cli_msg"]');
@@ -470,6 +525,12 @@
                                         <div class="input-group-append">
                                             <button type="button" class="wifi-networks-scan btn btn-outline-secondary">Scan</button>
                                         </div>
+                                        <div class="input-group-append">
+                                            <button type="button" class="wifi-networks-join btn btn-success">
+                                                <span class="spinner-border spinner-border-sm d-none wifi-networks-join-spinner" role="status" aria-hidden="true"></span>
+                                                <span>Join</span>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                                 <div class="col">
@@ -480,6 +541,7 @@
                                     </div>
                                 </div>
                             </div>
+                            <small class="wifi-join-feedback text-muted">Use Scan to pick a network, then Join to connect without rebooting.</small>
                             <input type="hidden" name="w_sta_scan_mode" value="0">
                             <input type="hidden" name="w_sta_ap_fwd" value="0">
                             <input type="hidden" name="w_sta_static" value="0">
@@ -558,6 +620,7 @@
                         <div class="card-header">
                             RTK
                             <small class="ntrip-client-stats stream-stats" data-stream="ntrip_client"></small>
+                            <small class="ntrip-client-status d-block text-muted"></small>
 
                         </div>
                         <div class="card-body">

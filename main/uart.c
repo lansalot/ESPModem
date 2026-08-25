@@ -20,6 +20,7 @@
 #include <esp_event.h>
 #include <esp_log.h>
 #include <string.h>
+#include <stdio.h>
 #include <protocol/nmea.h>
 #include <stream_stats.h>
 
@@ -29,9 +30,16 @@
 
 static const char *TAG = "UART";
 
-#define FIXED_UART_PORT UART_NUM_0
+#define FIXED_UART_PORT UART_NUM_1
 #define FIXED_UART_TX_PIN GPIO_NUM_12
 #define FIXED_UART_RX_PIN GPIO_NUM_13
+#define MIRROR_UART_PORT UART_NUM_0
+
+#if defined(CONFIG_ESP_CONSOLE_UART) && (CONFIG_ESP_CONSOLE_UART_NUM >= 0)
+#define UART_MIRROR_ENABLED 1
+#else
+#define UART_MIRROR_ENABLED 0
+#endif
 
 ESP_EVENT_DEFINE_BASE(UART_EVENT_READ);
 ESP_EVENT_DEFINE_BASE(UART_EVENT_WRITE);
@@ -58,6 +66,14 @@ static const bool uart_log_forward = false;
 static stream_stats_handle_t stream_stats;
 
 static void uart_task(void *ctx);
+
+static void uart_mirror_write(int mirror_port, const char *buf, size_t len) {
+    // The console UART (UART0) is driven via stdout/vfs, not the driver/uart.h
+    // API, so uart_tx_chars() fails with "uart driver error" since no driver
+    // was ever installed for it. Reuse the working stdout path instead.
+    (void) mirror_port;
+    fwrite(buf, 1, len, stdout);
+}
 
 void uart_init() {
     uart_port = FIXED_UART_PORT;
@@ -130,6 +146,11 @@ int uart_write(char *buf, size_t len) {
 
     int written = uart_write_bytes(uart_port, buf, len);
     if (written < 0) return written;
+
+    // Mirror outbound data to USB serial when a UART console is configured.
+    if (UART_MIRROR_ENABLED && uart_port != MIRROR_UART_PORT) {
+        uart_mirror_write(MIRROR_UART_PORT, buf, len);
+    }
 
     stream_stats_increment(stream_stats, 0, len);
 
